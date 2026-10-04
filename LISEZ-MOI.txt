@@ -1,0 +1,9 @@
+SWEET_CONTROL - pack widget + historique + synchro
+
+1. Copie CE dossier dans ton projet Capacitor (celui qui contient le dossier "android").
+2. Dans un terminal, à la racine du projet :   python install.py
+3. npx cap open android  >  Build > Build APK(s)
+4. Installe l'APK, ouvre l'appli, modifie un joueur.
+5. Appui long sur l'écran d'accueil > Widgets > Sweet_Control.
+
+Synchro : menu > "Historique & Synchro" > colle l'URL Firebase Realtime Database + un code partagé.
