@@ -3079,6 +3079,76 @@ applyAllMyStyles();
 restoreSession();
 checkStatsReminder();
 setInterval(checkStatsReminder, 5 * 60 * 1000);
+/* === SC EXTRA : historique, graphique, synchro, widget === */
+(function(){
+const HK='sc_history',SK='sc_sync',$=id=>document.getElementById(id);
+const ld=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}};
+const NUM=['trophies','wins','kills','earnings','pr','matches'];
+const NAMES={rank:'Rang',rankReload:'Rang Recharge',trophies:'Trophées',wins:'Victoires',kills:'Éliminations',earnings:'Gains',pr:'PR',matches:'Matchs'};
+function snap(p){const s={};NUM.forEach(k=>{if(p[k]!=null&&p[k]!=='')s[k]=Number(p[k])||0});
+ ['rank','rankReload'].forEach(k=>{const i=Object.keys(RANK_LABELS).indexOf(p[k]);if(i>=0)s[k]=i});return s}
+function record(){const h=ld(HK,[]);let ch=false;
+ Object.keys(games).forEach(g=>games[g].players.forEach(p=>{const s=snap(p);if(!Object.keys(s).length)return;
+  const last=[...h].reverse().find(e=>e.id===p.id);
+  if(!last||JSON.stringify(last.s)!==JSON.stringify(s)){h.push({t:Date.now(),g,id:p.id,n:p.pseudo,s});ch=true}}));
+ if(ch)localStorage.setItem(HK,JSON.stringify(h.slice(-3000)))}
+/* Widget : résumé lisible par le widget Android (via @capacitor/preferences) */
+function widget(){try{const P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.Preferences;if(!P)return;
+ const lines=[];Object.keys(games).forEach(g=>games[g].players.forEach(p=>{
+  const r=(typeof rankLabel==='function'&&rankLabel(p.rank))||(p.trophies!=null?p.trophies+' 🏆':'');lines.push(p.pseudo+' : '+r)}));
+ P.set({key:'sc_widget',value:JSON.stringify({t:Date.now(),lines:lines.slice(0,6)})})}catch(e){}}
+/* Synchro Firebase Realtime Database (REST) */
+const cfg=()=>ld(SK,{}),url=c=>c.url.replace(/\/$/,'')+'/sc/'+encodeURIComponent(c.code)+'.json';
+async function push(){const c=cfg();if(!c.url||!c.code)return;
+ try{const d={t:Date.now(),h:ld(HK,[])};Object.keys(games).forEach(g=>d[g]=games[g].players);
+  await fetch(url(c),{method:'PUT',body:JSON.stringify(d)});localStorage.setItem('sc_last',d.t);localStorage.removeItem('sc_dirty');setSt('✅ Synchronisé '+new Date().toLocaleTimeString('fr-FR'))}
+ catch(e){setSt('⚠️ Hors ligne')}}
+async function pull(){const c=cfg();if(!c.url||!c.code)return;
+ try{const d=await (await fetch(url(c))).json();if(!d)return push();
+  if(localStorage.getItem('sc_dirty'))return push();
+  if(d.t>Number(localStorage.getItem('sc_last')||0)){
+   Object.keys(games).forEach(g=>localStorage.setItem(games[g].storageKey,JSON.stringify(d[g]||[])));
+   localStorage.setItem(HK,JSON.stringify(d.h||[]));localStorage.setItem('sc_last',d.t);
+   Object.keys(games).forEach(g=>loadGame(g));widget();setSt('✅ Données reçues')}
+ }catch(e){setSt('⚠️ Hors ligne')}}
+function setSt(t){const e=$('scSt');if(e)e.textContent=t}
+let tm;const _p=persist;
+persist=async function(g){await _p(g);record();widget();localStorage.setItem('sc_dirty',1);clearTimeout(tm);tm=setTimeout(push,1500)};
+/* Graphique */
+function draw(){const cv=$('scCv');if(!cv)return;const pid=$('scP').value,m=$('scM').value;
+ const pts=ld(HK,[]).filter(e=>e.id===pid&&e.s[m]!=null).map(e=>[e.t,e.s[m]]);
+ const W=cv.width=cv.clientWidth*2,H=cv.height=360,x=cv.getContext('2d');x.clearRect(0,0,W,H);
+ const css=getComputedStyle(document.body),col=css.getPropertyValue('--cyan')||'#2196ff',mu=css.getPropertyValue('--muted')||'#888';
+ x.font='22px sans-serif';x.fillStyle=mu;
+ if(pts.length<2){x.fillText(pts.length?'1 seul point — modifie le joueur pour voir la courbe':'Pas encore d\'historique',20,H/2);return}
+ const t0=pts[0][0],t1=pts[pts.length-1][0],ys=pts.map(p=>p[1]),lo=Math.min(...ys),hi=Math.max(...ys),sp=(hi-lo)||1,pd=40;
+ const X=t=>pd+(t-t0)/((t1-t0)||1)*(W-2*pd),Y=v=>H-pd-(v-lo)/sp*(H-2*pd);
+ x.strokeStyle=col;x.lineWidth=4;x.beginPath();pts.forEach((p,i)=>i?x.lineTo(X(p[0]),Y(p[1])):x.moveTo(X(p[0]),Y(p[1])));x.stroke();
+ x.fillStyle=col;pts.forEach(p=>{x.beginPath();x.arc(X(p[0]),Y(p[1]),6,0,7);x.fill()});
+ x.fillStyle=mu;const lab=v=>(m==='rank'||m==='rankReload')?(rankLabel(Object.keys(RANK_LABELS)[v])||v):v;
+ x.fillText(lab(hi),6,24);x.fillText(lab(lo),6,H-8)}
+function openPanel(){let o=$('scPanel');if(o)o.remove();
+ const ps=[];Object.keys(games).forEach(g=>games[g].players.forEach(p=>ps.push(p)));
+ const c=cfg();o=document.createElement('div');o.id='scPanel';
+ o.style.cssText='position:fixed;inset:0;z-index:9999;background:var(--bg);color:var(--text);overflow:auto;padding:16px;font-family:inherit';
+ const I='width:100%;padding:10px;margin:4px 0;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text)';
+ o.innerHTML=`<button onclick="this.parentNode.remove()" style="float:right;font-size:22px;background:none;border:0;color:var(--text)">✕</button>
+ <h2>📈 Historique</h2><select id="scP" style="${I}">${ps.map(p=>`<option value="${p.id}">${escapeHtml(p.pseudo)}</option>`).join('')}</select>
+ <select id="scM" style="${I}"></select><canvas id="scCv" style="width:100%;height:180px;margin:8px 0"></canvas>
+ <h2>☁️ Synchro en ligne</h2><input id="scU" placeholder="URL Firebase (https://xxx.firebaseio.com)" value="${escapeHtml(c.url||'')}" style="${I}">
+ <input id="scC" placeholder="Code partagé (ex: leo-matteo-2026)" value="${escapeHtml(c.code||'')}" style="${I}">
+ <button id="scB" style="${I};background:var(--cyan);color:#fff;font-weight:800">Synchroniser maintenant</button><div id="scSt" style="color:var(--muted);font-size:13px"></div>`;
+ document.body.appendChild(o);
+ const fill=()=>{const id=$('scP').value,ks=new Set();ld(HK,[]).filter(e=>e.id===id).forEach(e=>Object.keys(e.s).forEach(k=>ks.add(k)));
+  $('scM').innerHTML=[...ks].map(k=>`<option value="${k}">${NAMES[k]||k}</option>`).join('');draw()};
+ $('scP').onchange=fill;$('scM').onchange=draw;fill();
+ $('scB').onclick=()=>{localStorage.setItem(SK,JSON.stringify({url:$('scU').value.trim(),code:$('scC').value.trim()}));localStorage.setItem('sc_dirty',1);push().then(pull)}}
+window.openScPanel=openPanel;
+const mb=document.querySelector('.side-menu-list .side-menu-item[onclick="openSettings()"]');
+if(mb){const b=document.createElement('button');b.className='side-menu-item';b.onclick=()=>{closeSideMenu();openPanel()};
+ b.innerHTML='<span class="side-menu-icon">📈</span> Historique & Synchro';mb.after(b)}
+setTimeout(()=>{record();widget();pull()},1500);setInterval(pull,30000);
+})();
 </script>
 
 </body>
